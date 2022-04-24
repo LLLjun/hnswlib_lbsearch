@@ -8,6 +8,10 @@
 #include <assert.h>
 #include <unordered_set>
 #include <list>
+#include <map>
+#include "dataset.h"
+#include "config.h"
+
 
 namespace hnswlib {
     typedef unsigned int tableint;
@@ -1020,11 +1024,14 @@ namespace hnswlib {
             // Take update lock to prevent race conditions on an element with insertion/update at the same time.
             std::unique_lock <std::mutex> lock_el_update(link_list_update_locks_[(cur_c & (max_update_element_locks - 1))]);
             std::unique_lock <std::mutex> lock_el(link_list_locks_[cur_c]);
-            
-            // int curlevel = 0;
+
+#if PLATG
+            int curlevel = 0;
+#else
             int curlevel = getRandomLevel(mult_);
             if (level > 0)
                 curlevel = level;
+#endif
 
             element_levels_[cur_c] = curlevel;
 
@@ -1123,6 +1130,10 @@ namespace hnswlib {
             dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
 
             for (int level = maxlevel_; level > 0; level--) {
+#if PLATG
+                printf("Error, current graph is plat\n");
+                exit(1);
+#endif
                 bool changed = true;
                 while (changed) {
                     changed = false;
