@@ -41,6 +41,7 @@ namespace hnswlib {
             level_generator_.seed(random_seed);
             update_probability_generator_.seed(random_seed + 1);
 
+            // linksize | maxM0 * neighbor | data_size_ | labeltype
             size_links_level0_ = maxM0_ * sizeof(tableint) + sizeof(linklistsizeint);
             size_data_per_element_ = size_links_level0_ + data_size_ + sizeof(labeltype);
             offsetData_ = size_links_level0_;
@@ -1019,6 +1020,8 @@ namespace hnswlib {
             // Take update lock to prevent race conditions on an element with insertion/update at the same time.
             std::unique_lock <std::mutex> lock_el_update(link_list_update_locks_[(cur_c & (max_update_element_locks - 1))]);
             std::unique_lock <std::mutex> lock_el(link_list_locks_[cur_c]);
+            
+            // int curlevel = 0;
             int curlevel = getRandomLevel(mult_);
             if (level > 0)
                 curlevel = level;
