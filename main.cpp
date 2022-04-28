@@ -14,12 +14,12 @@ inline void assignToThisCore(int core_id)
     sched_setaffinity(0, sizeof(mask), &mask);
 }
 
-void hnsw_impl(string stage, string using_dataset, size_t data_size);
+void hnsw_impl(string stage, string using_dataset, size_t data_size, size_t attr_size, size_t label_dim);
 
 int main(int argc, char **argv) {
 
-    if (argc != 4){
-        printf("Usage: ./main [stage: build or search or both] [dataset] [datasize]\n");
+    if (argc != 6){
+        printf("Usage: ./main [stage: build or search or both] [dataset] [datasize] [labelsize] [label_dim]\n");
         exit(1);
     } else {
         if (string(argv[1]) != "build" && string(argv[1]) != "search" && string(argv[1]) != "both") {
@@ -30,7 +30,7 @@ int main(int argc, char **argv) {
     // if (string(argv[1]) == "search")
     //     assignToThisCore(0);
 
-    hnsw_impl(string(argv[1]), string(argv[2]), atoi(argv[3]));
+    hnsw_impl(string(argv[1]), string(argv[2]), atoi(argv[3]), atoi(argv[4]), atoi(argv[5]));
 
     return 0;
 };

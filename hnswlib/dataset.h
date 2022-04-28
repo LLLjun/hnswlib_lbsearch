@@ -55,6 +55,13 @@ void CheckDataset(const string &dataname, map<string, size_t> &index_parameter, 
         printf("Error, unknown dataset: %s \n", dataname.c_str());
         exit(1);
     }
+
+    size_t attr_size = index_parameter["attr_size"];
+    size_t label_dim = index_parameter["label_dim"];
+    string path_label = "../dataset/label/";
+    index_string["path_attr"] = path_label + "label_" + dataname + "_base_value_" + to_string(attr_size) + ".txt"; //
+    index_string["path_q_attr"] = path_label + "label_" + dataname + "_query_value_" + to_string(attr_size) + "_labeldim_" + to_string(label_dim) + ".txt"; //
+    index_string["path_gt"] = path_label + dataname + "_groundtruth_label_value_" + to_string(attr_size) + "_labeldim_" + to_string(label_dim) + ".bin"; //
 }
 
 
