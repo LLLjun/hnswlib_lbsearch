@@ -1,5 +1,5 @@
 #define PLATG   true
-#define FMTINT  false
+#define FMTINT  true
 
 #if FMTINT
 typedef uint8_t DTSET;

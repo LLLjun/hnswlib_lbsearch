@@ -116,6 +116,7 @@ namespace hnswlib {
         tableint enterpoint_node_;
         std::vector<tableint> search_enterpoint_node_;
         unsigned search_enterpoint_node_num_;
+        unsigned bucket_num;
 
         size_t size_links_level0_;
         size_t offsetData_, offsetLevel0_;
@@ -247,7 +248,7 @@ namespace hnswlib {
 
         template <bool has_deletions, bool collect_metrics=false>
         std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
-        searchBaseLayerST(tableint ep_id, const void *data_point, size_t ef, std::vector<bool> bucket_id_table) const {
+        searchBaseLayerST(vector<tableint> ep_id, const void *data_point, size_t ef, std::vector<bool> bucket_id_table) const {
             VisitedList *vl = visited_list_pool_->getFreeVisitedList();
             vl_type *visited_array = vl->mass;
             vl_type visited_array_tag = vl->curV;
@@ -256,36 +257,42 @@ namespace hnswlib {
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
 
             dist_t lowerBound;
-            if (!has_deletions || !isMarkedDeleted(ep_id)) {
-                dist_t dist = fstdistfunc_(data_point, getDataByInternalId(ep_id), dist_func_param_);
-                lowerBound = dist;
-                top_candidates.emplace(dist, ep_id);
-                candidate_set.emplace(-dist, ep_id);
-            } else {
-                lowerBound = std::numeric_limits<dist_t>::max();
-                candidate_set.emplace(-lowerBound, ep_id);
-            }
+            lowerBound = std::numeric_limits<dist_t>::max();
+            // if (!has_deletions || !isMarkedDeleted(ep_id)) {
+            //     dist_t dist = fstdistfunc_(data_point, getDataByInternalId(ep_id), dist_func_param_);
+            //     lowerBound = dist;
+            //     top_candidates.emplace(dist, ep_id);
+            //     candidate_set.emplace(-dist, ep_id);
+            // } else {
+            //     lowerBound = std::numeric_limits<dist_t>::max();
+            //     candidate_set.emplace(-lowerBound, ep_id);
+            // }
 
-            visited_array[ep_id] = visited_array_tag;
+            // visited_array[ep_id] = visited_array_tag;
 
-            while (!candidate_set.empty()) {
 
-                std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
-
-                if ((-current_node_pair.first) > lowerBound && (top_candidates.size() == ef || has_deletions == false)) {
-                    break;
+            unsigned i_ep = 0;
+            unsigned ep_num = ep_id.size();
+            while (!candidate_set.empty() || i_ep < ep_num) {
+                tableint current_node_id;
+                if (i_ep == ep_num) {
+                    std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+                    if ((-current_node_pair.first) > lowerBound && (top_candidates.size() == ef || has_deletions == false)) {
+                        break;
+                    }
+                    candidate_set.pop();
+                    current_node_id = current_node_pair.second;
                 }
-                candidate_set.pop();
+                else {
+                    current_node_id = ep_id[i_ep];
+                    i_ep++;
+                }
 
-                tableint current_node_id = current_node_pair.second;
-                bool isBucketLink = false;
+                
                 int *data = (int *) get_linklist0(current_node_id);
-                // int *data = (int *) get_bucket_linklist0(current_node_id);
                 size_t size = getListCount((linklistsizeint*)data);
-//                bool cur_node_deleted = isMarkedDeleted(current_node_id);
                 if(collect_metrics){
                     metric_hops++;
-                    metric_distance_computations+=size;
                 }
 
 #ifdef USE_SSE
@@ -298,18 +305,10 @@ namespace hnswlib {
                 for (size_t j = 1; j <= size; j++) {
                     int candidate_bucket_id = *(data + j * 2 - 1);
                     if (bucket_id_table[candidate_bucket_id] == false) {
-                        if (j == size) {
-                            if (!isBucketLink) {
-                                isBucketLink = true;
-                                j = 0;
-                                data = (int *) get_bucket_linklist0(current_node_id);
-                                size = getListCount((linklistsizeint*)data);
-                            }
-                        }
                         continue;
                     }
                     int candidate_id = *(data + j * 2);
-//                    if (candidate_id == 0) continue;
+
 #ifdef USE_SSE
                     _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
                     _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + offsetData_,
@@ -321,6 +320,10 @@ namespace hnswlib {
 
                         char *currObj1 = (getDataByInternalId(candidate_id));
                         dist_t dist = fstdistfunc_(data_point, currObj1, dist_func_param_);
+
+                        if(collect_metrics){
+                            metric_distance_computations++;
+                        }
 
                         if (top_candidates.size() < ef || lowerBound > dist) {
                             candidate_set.emplace(-dist, candidate_id);
@@ -340,19 +343,6 @@ namespace hnswlib {
                                 lowerBound = top_candidates.top().first;
                         }
                     }
-
-                    if (j == size) {
-                        if (!isBucketLink) {
-                            isBucketLink = true;
-                            j = 0;
-                            data = (int *) get_bucket_linklist0(current_node_id);
-                            size = getListCount((linklistsizeint*)data);
-                        }
-                    }
-                }
-
-                if(collect_metrics){
-                    metric_distance_computations+=size;
                 }
             }
 
@@ -405,10 +395,6 @@ namespace hnswlib {
 
         linklistsizeint *get_linklist0(tableint internal_id) const {
             return (linklistsizeint *) (data_level0_memory_ + internal_id * size_data_per_element_ + offsetLevel0_);
-        };
-        
-        linklistsizeint *get_bucket_linklist0(tableint internal_id) const {
-            return (linklistsizeint *) (data_level0_memory_ + internal_id * size_data_per_element_ + offsetLevel0_ + bucket_links_offset_);
         };
 
         linklistsizeint *get_linklist0(tableint internal_id, char *data_level0_memory_) const {
@@ -680,6 +666,7 @@ namespace hnswlib {
             readBinaryPOD(input, maxlevel_);
             readBinaryPOD(input, enterpoint_node_);
             readBinaryPOD(input, search_enterpoint_node_num_);
+            bucket_num = search_enterpoint_node_num_;
             for (unsigned i = 0; i < search_enterpoint_node_num_; i++) {
                 tableint center_id_graph;
                 readBinaryPOD(input, center_id_graph);
@@ -1169,50 +1156,50 @@ namespace hnswlib {
         }
 
         std::priority_queue<std::pair<dist_t, labeltype >>
-        searchKnn(const void *query_data, size_t k, std::vector<bool> bucket_id_table) const {
+        searchKnn(const void *query_data, size_t k, std::vector<bool> bucket_id_table, const unsigned enterpoint_num) const {
             std::priority_queue<std::pair<dist_t, labeltype >> result;
             if (cur_element_count == 0) return result;
 
-            tableint currObj = enterpoint_node_;
-            for (int i = 0; i < bucket_id_table.size(); i++) {
+            std::vector<tableint> currObj;
+            for (int i = 0; i < bucket_num; i++) {
                 if (bucket_id_table[i] == true) {
-                    currObj = search_enterpoint_node_[i];
-                    break;
+                    currObj.push_back(search_enterpoint_node_[i]);
+                    if (currObj.size() == enterpoint_num) break;
                 }
             }
 
-            dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(currObj), dist_func_param_);
+//             dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(currObj), dist_func_param_);
 
-            for (int level = maxlevel_; level > 0; level--) {
-#if PLATG
-                printf("Error, current graph is plat\n");
-                exit(1);
-#endif
-                bool changed = true;
-                while (changed) {
-                    changed = false;
-                    unsigned int *data;
+//             for (int level = maxlevel_; level > 0; level--) {
+// #if PLATG
+//                 printf("Error, current graph is plat\n");
+//                 exit(1);
+// #endif
+//                 bool changed = true;
+//                 while (changed) {
+//                     changed = false;
+//                     unsigned int *data;
 
-                    data = (unsigned int *) get_linklist(currObj, level);
-                    int size = getListCount(data);
-                    metric_hops++;
-                    metric_distance_computations+=size;
+//                     data = (unsigned int *) get_linklist(currObj, level);
+//                     int size = getListCount(data);
+//                     metric_hops++;
+//                     metric_distance_computations+=size;
 
-                    tableint *datal = (tableint *) (data + 1);
-                    for (int i = 0; i < size; i++) {
-                        tableint cand = datal[i];
-                        if (cand < 0 || cand > max_elements_)
-                            throw std::runtime_error("cand error");
-                        dist_t d = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
+//                     tableint *datal = (tableint *) (data + 1);
+//                     for (int i = 0; i < size; i++) {
+//                         tableint cand = datal[i];
+//                         if (cand < 0 || cand > max_elements_)
+//                             throw std::runtime_error("cand error");
+//                         dist_t d = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
 
-                        if (d < curdist) {
-                            curdist = d;
-                            currObj = cand;
-                            changed = true;
-                        }
-                    }
-                }
-            }
+//                         if (d < curdist) {
+//                             curdist = d;
+//                             currObj = cand;
+//                             changed = true;
+//                         }
+//                     }
+//                 }
+//             }
 
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
             if (num_deleted_) {

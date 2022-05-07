@@ -248,9 +248,11 @@ public:
 
     HierarchicalNSW<DTres> *appr_alg;
     std::vector<HierarchicalNSW<DTres> *> appr_alg_bucket;
+    HierarchicalNSW<DTres> *appr_alg_center;
 
     DTset *massB;
     DTset *massbucket;
+    DTset *masscenter;
     DTset *massQ;
 
     char * data_memory;
@@ -262,6 +264,7 @@ public:
     std::vector<unsigned> bucket_size;
     std::vector<std::vector<unsigned>> bucket;
     std::vector<unsigned> center_id_graph;
+    std::vector<unsigned> center_id_data;
 
     size_t offsetLevel0;
     size_t max_elements;
@@ -279,6 +282,7 @@ public:
     double mult;
     size_t ef_construction;
 
+    unsigned enterpoint_num;
 
 
     hnswMultiGraph(map<string, size_t> &mappmt, map<string, string> &mapstr) {
@@ -302,6 +306,9 @@ public:
 
     ~hnswMultiGraph() {}
 
+    void testcode(std::vector<std::bitset<BIT_SET_SIZE>> bit_table) {
+    }
+
     
 
 
@@ -309,21 +316,18 @@ public:
         size_t correct = 0;
         size_t total = 0;
         std::vector<bool> bucket_id_query_tmp(bucket_num);
+        enterpoint_num = 1;
 
     //     omp_set_num_threads(3);
     // #pragma omp parallel for
         for (int i = 0; i < qsize; i++) {
-            for (int j = 0; j < bucket_num; j++) {
-                bucket_id_query_tmp[j] = false;
-            }
+
+            bucket_id_query_tmp.assign(bucket_num, false);
             for (int j = 0; j < attr_dim; j++) {
                 bucket_id_query_tmp[bucket_id_query[i][j]] = true;
             }
 
-            // bucket_id_query_tmp[bucket_id_query[i]] = true;
-            // bucket_id_query_tmp[(bucket_id_query[i] + 1) % bucket_num] = true;
-            // bucket_id_query_tmp[(bucket_id_query[i] + 999) % bucket_num] = true;
-            std::priority_queue<std::pair<DTres, labeltype >> result = appr_alg->searchKnn(massQ + vecdim * i, k, bucket_id_query_tmp);
+            std::priority_queue<std::pair<DTres, labeltype >> result = appr_alg->searchKnn(massQ + vecdim * i, k, bucket_id_query_tmp, enterpoint_num);
 
             std::priority_queue<std::pair<DTres, labeltype >> gt(answers[i]);
             unordered_set<labeltype> g;
@@ -352,7 +356,7 @@ public:
         vector<size_t> efs;
         for (int i = 10; i <= 100; i += 10)
             efs.push_back(i);
-        cout << "efs\t" << "R@" << k << "\t" << "time_us\t" << "NDC_avg" << endl;
+        cout << "efs\t" << "R@" << k << "\t" << "QPS\t" << "time_us\t" << "NDC_avg" << endl;
 
         for (size_t ef : efs) {
             appr_alg->setEf(ef);
@@ -366,7 +370,7 @@ public:
             float hop_avg = 1.0f * appr_alg->metric_hops / qsize;
             float NDC_avg = 1.0f * appr_alg->metric_distance_computations / qsize;
 
-            cout << ef << "\t" << recall << "\t" << time_us_per_query << "\t" << NDC_avg << endl;
+            cout << ef << "\t" << recall << "\t" << 1 / time_us_per_query * 1e6 << "\t" << time_us_per_query << "\t" << NDC_avg << endl;
 
             if (recall > 1.0) {
                 cout << recall << "\t" << time_us_per_query << " us\n";
@@ -455,17 +459,49 @@ public:
         return center_id;
     }
 
+    void build_index_3(HierarchicalNSW<DTres> *appr_alg, size_t vecsize, size_t vecdim, std::vector<unsigned> centers){
+        unsigned center_id_in_centers = compArrayCenter<DTset>(masscenter, vecsize, vecdim);
+        unsigned center_id = centers[center_id_in_centers];
+        appr_alg->addPoint((void *) (massB + center_id * vecdim), (size_t) center_id);
+
+        cout << "Building index:\n";
+        int j1 = 0;
+        Timer stopw = Timer();
+        Timer stopw_full = Timer();
+        size_t report_every = vecsize;
+#pragma omp parallel for
+        for (size_t j = 0; j < vecsize; j++) {
+#pragma omp critical
+            {
+                j1++;
+                if (j1 % report_every == 0) {
+                    cout << j1 / (0.01 * vecsize) << " %, "
+                        << report_every / (1000.0 * stopw.getElapsedTimes()) << " kips " << " Mem: "
+                        << getCurrentRSS() / 1000000 << " Mb \n";
+                    stopw.reset();
+                }
+            }
+
+            size_t ic = centers[j]; 
+            if (j != center_id_in_centers)
+                appr_alg->addPoint((void *) (massB + ic * vecdim), ic);
+
+        }
+        cout << "Build time:" << stopw_full.getElapsedTimes() << "  seconds\n";
+
+    }
+
 
     void config_index(){
         ///
-        size_t size_links = (appr_alg->maxM0_ * (sizeof(hnswlib::tableint) + sizeof(unsigned)) + sizeof(hnswlib::linklistsizeint)) * 2;
+        size_t size_links = (appr_alg->maxM0_ + appr_alg_bucket[0]->maxM0_) * (sizeof(hnswlib::tableint) + sizeof(unsigned)) + sizeof(hnswlib::linklistsizeint);
 
         offsetLevel0 = appr_alg->offsetLevel0_;
         max_elements = appr_alg->max_elements_;
         cur_element_count = appr_alg->cur_element_count;
         size_data_per_element = size_links + appr_alg->data_size_ + sizeof(hnswlib::labeltype);
         data_offset = size_links;
-        bucket_links_offset = size_links / 2;
+        // bucket_links_offset = size_links / 2;
         label_offset = size_links + appr_alg->data_size_;
         maxlevel = appr_alg->maxlevel_;
         enterpoint_node = appr_alg->enterpoint_node_;
@@ -480,6 +516,7 @@ public:
 
 
         ///
+        hnswlib::linklistsizeint linklistsize[4];
         hnswlib::tableint link_id;
         hnswlib::labeltype link_id_data;
         unsigned link_bucket_id;
@@ -487,26 +524,57 @@ public:
         for (size_t i = 0; i < bucket_num; i++) {
             unsigned bucket_vecsize = bucket_size[i];
             for (size_t in_bucket_id = 0; in_bucket_id < bucket_vecsize; in_bucket_id++) {
+                std::vector<hnswlib::tableint> link_id_table;
                 hnswlib::labeltype id_data = appr_alg_bucket[i]->getExternalLabel(in_bucket_id);
                 auto search = appr_alg->label_lookup_.find(id_data);
                 unsigned id_graph = search->second;
-                memcpy(data_memory + id_graph * size_data_per_element, appr_alg->data_level0_memory_ + id_graph * appr_alg->size_data_per_element_, sizeof(hnswlib::linklistsizeint));
-                for (int j = 0; j < appr_alg->maxM0_; j++) {
-                    memcpy(&link_id, appr_alg->data_level0_memory_ + id_graph * appr_alg->size_data_per_element_ + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint), sizeof(hnswlib::tableint));
-                    link_id_data = appr_alg->getExternalLabel(link_id);
-                    link_bucket_id = bucket_id[link_id_data];
-                    memcpy(data_memory + id_graph * size_data_per_element + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint) + j * sizeof(unsigned), &link_bucket_id, sizeof(unsigned));
-                    memcpy(data_memory + id_graph * size_data_per_element + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint) + (j + 1) * sizeof(unsigned), &link_id, sizeof(hnswlib::tableint));
+                linklistsize[1] = *(hnswlib::linklistsizeint *)(appr_alg->data_level0_memory_ + id_graph * appr_alg->size_data_per_element_);
+                linklistsize[2] = *(hnswlib::linklistsizeint *)(appr_alg_bucket[i]->data_level0_memory_ + in_bucket_id * appr_alg_bucket[i]->size_data_per_element_);
+                // memcpy(data_memory + id_graph * size_data_per_element, appr_alg->data_level0_memory_ + id_graph * appr_alg->size_data_per_element_, sizeof(hnswlib::linklistsizeint));
+                unsigned id_centers;
+                if (find(center_id_data.begin(), center_id_data.end(), id_data) != center_id_data.end()) {
+                    auto search_centers = appr_alg_center->label_lookup_.find(id_data);
+                    id_centers = search_centers->second;
+                    linklistsize[3] = *(hnswlib::linklistsizeint *)(appr_alg_center->data_level0_memory_ + id_centers * appr_alg_center->size_data_per_element_);
                 }
-                memcpy(data_memory + id_graph * size_data_per_element + bucket_links_offset, appr_alg_bucket[i]->data_level0_memory_ + in_bucket_id * appr_alg_bucket[i]->size_data_per_element_, sizeof(hnswlib::linklistsizeint));
-                for (int j = 0; j < appr_alg_bucket[i]->maxM0_; j++) {
+                else {
+                    linklistsize[3] = 0;
+                }
+                
+                for (int j = 0; j < linklistsize[1]; j++) {
+                    memcpy(&link_id, appr_alg->data_level0_memory_ + id_graph * appr_alg->size_data_per_element_ + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint), sizeof(hnswlib::tableint));
+                    if (find(link_id_table.begin(), link_id_table.end(), link_id) == link_id_table.end())
+                        link_id_table.push_back(link_id);
+                }
+                
+                for (int j = 0; j < linklistsize[2]; j++) {
                     memcpy(&link_id, appr_alg_bucket[i]->data_level0_memory_ + in_bucket_id * appr_alg_bucket[i]->size_data_per_element_ + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint), sizeof(hnswlib::tableint));
                     link_id_data = appr_alg_bucket[i]->getExternalLabel(link_id);
                     link_bucket_id = bucket_id[link_id_data];
                     auto link_search = appr_alg->label_lookup_.find(link_id_data);
-                    unsigned link_id_graph = link_search->second;
-                    memcpy(data_memory + id_graph * size_data_per_element + bucket_links_offset + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint) + j * sizeof(unsigned), &link_bucket_id, sizeof(unsigned));
-                    memcpy(data_memory + id_graph * size_data_per_element + bucket_links_offset + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint) + (j + 1) * sizeof(unsigned), &link_id_graph, sizeof(hnswlib::tableint));
+                    hnswlib::tableint link_id_graph = link_search->second;
+                    if (find(link_id_table.begin(), link_id_table.end(), link_id_graph) == link_id_table.end())
+                        link_id_table.push_back(link_id_graph);
+                }
+
+                for (int j = 0; j < linklistsize[3]; j++) {
+                    memcpy(&link_id, appr_alg_center->data_level0_memory_ + id_centers * appr_alg_center->size_data_per_element_ + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint), sizeof(hnswlib::tableint));
+                    link_id_data = appr_alg_center->getExternalLabel(link_id);
+                    link_bucket_id = bucket_id[link_id_data];
+                    auto link_search = appr_alg->label_lookup_.find(link_id_data);
+                    hnswlib::tableint link_id_graph = link_search->second;
+                    if (find(link_id_table.begin(), link_id_table.end(), link_id_graph) == link_id_table.end())
+                        link_id_table.push_back(link_id_graph);
+                }
+
+                linklistsize[0] = std::min(link_id_table.size(), (appr_alg->maxM0_ + appr_alg_bucket[0]->maxM0_));
+                memcpy(data_memory + id_graph * size_data_per_element, linklistsize, sizeof(hnswlib::linklistsizeint));
+                for (int j = 0; j < linklistsize[0]; j++) {
+                    link_id = link_id_table[j];
+                    link_id_data = appr_alg->getExternalLabel(link_id);
+                    link_bucket_id = bucket_id[link_id_data];
+                    memcpy(data_memory + id_graph * size_data_per_element + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint) + j * sizeof(unsigned), &link_bucket_id, sizeof(unsigned));
+                    memcpy(data_memory + id_graph * size_data_per_element + sizeof(hnswlib::linklistsizeint) + j * sizeof(hnswlib::tableint) + (j + 1) * sizeof(unsigned), &link_id, sizeof(hnswlib::tableint));
                 }
                 memcpy(data_memory + id_graph * size_data_per_element + data_offset, appr_alg_bucket[i]->data_level0_memory_ + in_bucket_id * appr_alg_bucket[i]->size_data_per_element_ + appr_alg_bucket[i]->offsetData_, size_data_per_element - size_links);
             }
@@ -539,12 +607,6 @@ public:
 
         output.write(data_memory, cur_element_count * size_data_per_element);
 
-        // for (size_t i = 0; i < appr_alg->cur_element_count; i++) {
-        //     unsigned int linkListSize = appr_alg->element_levels_[i] > 0 ? appr_alg->size_links_per_element_ * appr_alg->element_levels_[i] : 0;
-        //     writeBinaryPOD(output, linkListSize);
-        //     if (linkListSize)
-        //         output.write(appr_alg->linkLists_[i], linkListSize);
-        // }
         output.close();
         free(data_memory);
     }
@@ -589,6 +651,8 @@ public:
                 bucket[bucket_id[i]].push_back(i);
             }
 
+            masscenter = new DTset[bucket_num * vecdim]();
+
             for (size_t i = 0; i < bucket_num; i++) {
                 bucket_size.push_back(bucket[i].size());
                 unsigned bucket_vecsize = bucket_size[i];
@@ -598,17 +662,22 @@ public:
                 for (size_t j = 0; j < bucket_vecsize; j++) {
                     memcpy(massbucket + j * vecdim, massB + bucket[i][j] * vecdim, vecdim * sizeof(DTset));
                 }
-                unsigned center_id_data = build_index_2(appr_alg_bucket[i], bucket_vecsize, vecdim, bucket[i]);
-                auto search = appr_alg->label_lookup_.find(center_id_data);
+                center_id_data.push_back(build_index_2(appr_alg_bucket[i], bucket_vecsize, vecdim, bucket[i]));
+                memcpy(masscenter + i * vecdim, massB + center_id_data[i] * vecdim, vecdim * sizeof(DTset));
+                auto search = appr_alg->label_lookup_.find(center_id_data[i]);
                 center_id_graph.push_back(search->second);
                 delete[] massbucket;
             }
+
+            appr_alg_center = new HierarchicalNSW<DTres>(&l2space, bucket_num, M / 4, efConstruction);
+            build_index_3(appr_alg_center, bucket_num, vecdim, center_id_data);
 
             if (isSave) {
                 config_index();
                 save_index(index);
             }
             
+            delete[] masscenter;
             delete[] massB;
             delete appr_alg;
             for (size_t i = 0; i < bucket_num; i++) {

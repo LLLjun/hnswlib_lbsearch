@@ -112,6 +112,8 @@ bool AVX512Capable() {
 #include <vector>
 #include <iostream>
 #include <string.h>
+#include <bitset>
+#define BIT_SET_SIZE 32
 
 namespace hnswlib {
     typedef size_t labeltype;
@@ -156,7 +158,7 @@ namespace hnswlib {
     public:
         virtual void addPoint(const void *datapoint, labeltype label)=0;
         virtual std::priority_queue<std::pair<dist_t, labeltype >> searchKnn(const void *, size_t) const = 0;
-        virtual std::priority_queue<std::pair<dist_t, labeltype >> searchKnn(const void *, size_t, std::vector<bool>) const = 0;
+        virtual std::priority_queue<std::pair<dist_t, labeltype >> searchKnn(const void *, size_t, std::vector<bool>, const unsigned) const = 0;
 
         // Return k nearest neighbor in the order of closer fist
         virtual std::vector<std::pair<dist_t, labeltype>>
