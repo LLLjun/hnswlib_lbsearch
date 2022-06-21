@@ -129,6 +129,7 @@ namespace hnswlib {
         size_t bucket_links_offset_;
 
         size_t label_offset_;
+        size_t bucketid_offset_;
         DISTFUNC<dist_t> fstdistfunc_;
         void *dist_func_param_;
         std::unordered_map<labeltype, tableint> label_lookup_;
@@ -152,6 +153,10 @@ namespace hnswlib {
 
         inline char *getDataByInternalId(tableint internal_id) const {
             return (data_level0_memory_ + internal_id * size_data_per_element_ + offsetData_);
+        }
+
+        inline unsigned *getBucketIdByInternalId(tableint internal_id) const {
+            return (unsigned *) (data_level0_memory_ + internal_id * size_data_per_element_ + bucketid_offset_);
         }
 
         int getRandomLevel(double reverse_size) {
@@ -258,37 +263,39 @@ namespace hnswlib {
 
             dist_t lowerBound;
             lowerBound = std::numeric_limits<dist_t>::max();
-            // if (!has_deletions || !isMarkedDeleted(ep_id)) {
-            //     dist_t dist = fstdistfunc_(data_point, getDataByInternalId(ep_id), dist_func_param_);
-            //     lowerBound = dist;
-            //     top_candidates.emplace(dist, ep_id);
-            //     candidate_set.emplace(-dist, ep_id);
-            // } else {
-            //     lowerBound = std::numeric_limits<dist_t>::max();
-            //     candidate_set.emplace(-lowerBound, ep_id);
-            // }
-
-            // visited_array[ep_id] = visited_array_tag;
-
 
             unsigned i_ep = 0;
             unsigned ep_num = ep_id.size();
-            while (!candidate_set.empty() || i_ep < ep_num) {
-                tableint current_node_id;
-                if (i_ep == ep_num) {
-                    std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
-                    if ((-current_node_pair.first) > lowerBound && (top_candidates.size() == ef || has_deletions == false)) {
-                        break;
-                    }
-                    candidate_set.pop();
-                    current_node_id = current_node_pair.second;
+            for (; i_ep < ep_num; i_ep++) {
+                dist_t dist = fstdistfunc_(data_point, getDataByInternalId(ep_id[i_ep]), dist_func_param_);
+                if(collect_metrics){
+                    metric_distance_computations++;
                 }
-                else {
-                    current_node_id = ep_id[i_ep];
-                    i_ep++;
-                }
+                if (top_candidates.size() < ef || lowerBound > dist) {
+                    candidate_set.emplace(-dist, ep_id[i_ep]);
+                    top_candidates.emplace(dist, ep_id[i_ep]);
 
-                
+                    if (top_candidates.size() > ef)
+                        top_candidates.pop();
+
+                    if (!top_candidates.empty())
+                        lowerBound = top_candidates.top().first;
+                }
+            }
+
+            while (!candidate_set.empty()) {
+                tableint current_node_id;
+
+                std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+                if ((-current_node_pair.first) > lowerBound && (top_candidates.size() == ef || has_deletions == false)) {
+                    break;
+                }
+                candidate_set.pop();
+                current_node_id = current_node_pair.second;
+
+                // unsigned current_node_bucket_id = *(getBucketIdByInternalId(current_node_id));
+                // std::cout << current_node_bucket_id << ' ';
+
                 int *data = (int *) get_linklist0(current_node_id);
                 size_t size = getListCount((linklistsizeint*)data);
                 if(collect_metrics){
@@ -296,23 +303,29 @@ namespace hnswlib {
                 }
 
 #ifdef USE_SSE
+                _mm_prefetch((char *) (data + 1), _MM_HINT_T0);
                 _mm_prefetch((char *) (visited_array + *(data + 1)), _MM_HINT_T0);
-                _mm_prefetch((char *) (visited_array + *(data + 1) + 64), _MM_HINT_T0);
-                _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
-                _mm_prefetch((char *) (data + 2), _MM_HINT_T0);
+                // _mm_prefetch((char *) (visited_array + *(data + 1) + 64), _MM_HINT_T0);
+                // _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + bucketid_offset_, _MM_HINT_T0);
 #endif
 
                 for (size_t j = 1; j <= size; j++) {
-                    int candidate_bucket_id = *(data + j * 2 - 1);
+                    // unsigned candidate_bucket_id = *(data + j * 2 - 1);
+                    // tableint candidate_id = *(data + j * 2);
+
+                    tableint candidate_id = *(data + j);
+                    unsigned candidate_bucket_id = *(getBucketIdByInternalId(candidate_id));
+                    
                     if (bucket_id_table[candidate_bucket_id] == false) {
                         continue;
                     }
-                    int candidate_id = *(data + j * 2);
+                    
 
 #ifdef USE_SSE
                     _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
-                    _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + offsetData_,
-                                 _MM_HINT_T0);////////////
+                    // _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);////////////
+                    _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + bucketid_offset_, _MM_HINT_T0);////////////
 #endif
                     if (!(visited_array[candidate_id] == visited_array_tag)) {
 
@@ -345,6 +358,122 @@ namespace hnswlib {
                     }
                 }
             }
+
+            // std::cout << std::endl;
+
+            visited_list_pool_->releaseVisitedList(vl);
+            return top_candidates;
+        }
+
+        template <bool has_deletions, bool collect_metrics=false>
+        std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst>
+        searchBaseLayerSTEc(vector<tableint> ep_id, const void *data_point, size_t ef, std::vector<bool> bucket_id_table) const {
+            VisitedList *vl = visited_list_pool_->getFreeVisitedList();
+            vl_type *visited_array = vl->mass;
+            vl_type visited_array_tag = vl->curV;
+
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+            std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> candidate_set;
+
+            dist_t lowerBound;
+            lowerBound = std::numeric_limits<dist_t>::max();
+
+            unsigned i_ep = 0;
+            unsigned ep_num = ep_id.size();
+            for (; i_ep < ep_num; i_ep++) {
+                dist_t dist = fstdistfunc_(data_point, getDataByInternalId(ep_id[i_ep]), dist_func_param_);
+                if(collect_metrics){
+                    metric_distance_computations++;
+                }
+                if (top_candidates.size() < ef || lowerBound > dist) {
+                    candidate_set.emplace(-dist, ep_id[i_ep]);
+                    top_candidates.emplace(dist, ep_id[i_ep]);
+
+                    if (top_candidates.size() > ef)
+                        top_candidates.pop();
+
+                    if (!top_candidates.empty())
+                        lowerBound = top_candidates.top().first;
+                }
+            }
+
+            while (!candidate_set.empty()) {
+                tableint current_node_id;
+
+                std::pair<dist_t, tableint> current_node_pair = candidate_set.top();
+                if ((-current_node_pair.first) > lowerBound && (top_candidates.size() == ef || has_deletions == false)) {
+                    break;
+                }
+                candidate_set.pop();
+                current_node_id = current_node_pair.second;
+
+                unsigned current_node_bucket_id = *(getBucketIdByInternalId(current_node_id));
+                bool current_node_is_target = bucket_id_table[current_node_bucket_id];
+                // std::cout << current_node_bucket_id << ' ';
+
+                int *data = (int *) get_linklist0(current_node_id);
+                size_t size = getListCount((linklistsizeint*)data);
+                if(collect_metrics){
+                    metric_hops++;
+                }
+
+#ifdef USE_SSE
+                _mm_prefetch((char *) (data + 1), _MM_HINT_T0);
+                _mm_prefetch((char *) (visited_array + *(data + 1)), _MM_HINT_T0);
+                // _mm_prefetch((char *) (visited_array + *(data + 1) + 64), _MM_HINT_T0);
+                // _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);
+                _mm_prefetch(data_level0_memory_ + (*(data + 1)) * size_data_per_element_ + bucketid_offset_, _MM_HINT_T0);
+#endif
+
+                for (size_t j = 1; j <= size; j++) {
+
+                    tableint candidate_id = *(data + j);
+                    unsigned candidate_bucket_id = *(getBucketIdByInternalId(candidate_id));
+                    bool candidate_is_target = bucket_id_table[candidate_bucket_id];
+                    
+                    if (current_node_is_target == false && candidate_is_target == false) {
+                        continue;
+                    }
+                    
+
+#ifdef USE_SSE
+                    _mm_prefetch((char *) (visited_array + *(data + j + 1)), _MM_HINT_T0);
+                    // _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + offsetData_, _MM_HINT_T0);////////////
+                    _mm_prefetch(data_level0_memory_ + (*(data + j + 1)) * size_data_per_element_ + bucketid_offset_, _MM_HINT_T0);////////////
+#endif
+                    if (!(visited_array[candidate_id] == visited_array_tag)) {
+
+                        visited_array[candidate_id] = visited_array_tag;
+
+                        char *currObj1 = (getDataByInternalId(candidate_id));
+                        dist_t dist = fstdistfunc_(data_point, currObj1, dist_func_param_);
+
+                        if(collect_metrics){
+                            metric_distance_computations++;
+                        }
+
+                        if (top_candidates.size() < ef || lowerBound > dist) {
+                            candidate_set.emplace(-dist, candidate_id);
+#ifdef USE_SSE
+                            _mm_prefetch(data_level0_memory_ + candidate_set.top().second * size_data_per_element_ +
+                                         offsetLevel0_,///////////
+                                         _MM_HINT_T0);////////////////////////
+#endif
+
+                            if ((!has_deletions || !isMarkedDeleted(candidate_id)) && candidate_is_target == true)
+                                top_candidates.emplace(dist, candidate_id);
+
+                            if (top_candidates.size() > ef)
+                                top_candidates.pop();
+
+                            if (!top_candidates.empty())
+                                lowerBound = top_candidates.top().first;
+                        }
+                    }
+                }
+            }
+
+            // std::cout << std::endl;
 
             visited_list_pool_->releaseVisitedList(vl);
             return top_candidates;
@@ -661,6 +790,7 @@ namespace hnswlib {
             max_elements_ = max_elements;
             readBinaryPOD(input, size_data_per_element_);
             readBinaryPOD(input, label_offset_);
+            readBinaryPOD(input, bucketid_offset_);
             readBinaryPOD(input, offsetData_);
             readBinaryPOD(input, bucket_links_offset_);
             readBinaryPOD(input, maxlevel_);
@@ -1156,7 +1286,7 @@ namespace hnswlib {
         }
 
         std::priority_queue<std::pair<dist_t, labeltype >>
-        searchKnn(const void *query_data, size_t k, std::vector<bool> bucket_id_table, const unsigned enterpoint_num) const {
+        searchKnn(const void *query_data, size_t k, std::vector<bool> bucket_id_table, const unsigned enterpoint_num, const bool strategy) const {
             std::priority_queue<std::pair<dist_t, labeltype >> result;
             if (cur_element_count == 0) return result;
 
@@ -1202,13 +1332,26 @@ namespace hnswlib {
 //             }
 
             std::priority_queue<std::pair<dist_t, tableint>, std::vector<std::pair<dist_t, tableint>>, CompareByFirst> top_candidates;
+            
             if (num_deleted_) {
-                top_candidates=searchBaseLayerST<true,true>(
+                if (strategy) {
+                    top_candidates=searchBaseLayerSTEc<true,true>(
                         currObj, query_data, std::max(ef_, k), bucket_id_table);
+                }
+                else {
+                    top_candidates=searchBaseLayerST<true,true>(
+                        currObj, query_data, std::max(ef_, k), bucket_id_table);
+                }
             }
             else{
-                top_candidates=searchBaseLayerST<false,true>(
+                if (strategy) {
+                    top_candidates=searchBaseLayerSTEc<false,true>(
                         currObj, query_data, std::max(ef_, k), bucket_id_table);
+                }
+                else {
+                    top_candidates=searchBaseLayerST<false,true>(
+                        currObj, query_data, std::max(ef_, k), bucket_id_table);
+                }
             }
 
             while (top_candidates.size() > k) {

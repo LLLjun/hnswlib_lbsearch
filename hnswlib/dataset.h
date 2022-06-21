@@ -59,9 +59,11 @@ void CheckDataset(const string &dataname, map<string, size_t> &index_parameter, 
     size_t attr_size = index_parameter["attr_size"];
     size_t label_dim = index_parameter["label_dim"];
     string path_label = "../dataset/label/";
-    index_string["path_attr"] = path_label + "label_" + dataname + "_base_value_" + to_string(attr_size) + ".txt"; //
-    index_string["path_q_attr"] = path_label + "label_" + dataname + "_query_value_" + to_string(attr_size) + "_labeldim_" + to_string(label_dim) + ".txt"; //
-    index_string["path_gt"] = path_label + dataname + "_groundtruth_label_value_" + to_string(attr_size) + "_labeldim_" + to_string(label_dim) + ".bin"; //
+    string size_milllions = to_string(subset_size_milllions);
+    if (subset_size_milllions == 1) size_milllions = "";
+    index_string["path_attr"] = path_label + "label_" + dataname + size_milllions + "_base_value_" + to_string(attr_size) + ".txt"; //
+    index_string["path_q_attr"] = path_label + "label_" + dataname + size_milllions + "_query_value_" + to_string(attr_size) + "_labeldim_" + to_string(label_dim) + ".txt"; //
+    index_string["path_gt"] = path_label + dataname + size_milllions + "_groundtruth_label_value_" + to_string(attr_size) + "_labeldim_" + to_string(label_dim) + ".bin"; //
 }
 
 

@@ -36,7 +36,8 @@ void hnsw_impl(string stage, string using_dataset, size_t data_size, size_t attr
 
 	size_t subset_size_milllions = data_size;
 	size_t efConstruction = 200;
-	size_t M = 20;
+	size_t M1 = 20;
+    size_t M2 = 20;
     size_t k = 10;
 
     size_t vecsize = subset_size_milllions * 1000000;
@@ -46,7 +47,8 @@ void hnsw_impl(string stage, string using_dataset, size_t data_size, size_t attr
     std::map<string, size_t> mappmt;
     mappmt["subset_size_milllions"] = subset_size_milllions;
     mappmt["efConstruction"] = efConstruction;
-    mappmt["M"] = M;
+    mappmt["M1"] = M1;
+    mappmt["M2"] = M2;
     mappmt["k"] = k;
     mappmt["vecsize"] = vecsize;
     mappmt["attr_size"] = attr_size;
@@ -55,7 +57,7 @@ void hnsw_impl(string stage, string using_dataset, size_t data_size, size_t attr
     std::map<string, string> mapstr;
 
     string hnsw_index = pre_index + "/" + using_dataset + to_string(subset_size_milllions) +
-                        "m_ef" + to_string(efConstruction) + "m" + to_string(M) + "_attr_" + to_string(attr_size) + ".bin";
+                        "m_ef" + to_string(efConstruction) + "m" + to_string(M1) + "m" + to_string(M2) + "_attr_" + to_string(attr_size) + ".bin";
     mapstr["index"] = hnsw_index;
     CheckDataset(using_dataset, mappmt, mapstr);
     
