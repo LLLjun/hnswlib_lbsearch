@@ -332,3 +332,56 @@ HNSW paper:
 ```
 
 The update algorithm supported in this repository is to be published in "Dynamic Updates For HNSW, Hierarchical Navigable Small World Graphs" US Patent 15/929,802 by Apoorv Sharma, Abhishek Tayal and Yury Malkov.
+
+
+
+
+
+### 向量+属性 混合搜索 数据集格式
+base.vector 为二进制文件，格式如下：
+```bash
+向量数量N 向量维度D {向量1，向量2，...，向量N}
+```
+query.vector 为二进制文件，格式如下：
+```bash
+向量数量N 向量维度D {向量1，向量2，...，向量N}
+```
+base.attr 为txt文件，格式如下：
+```bash
+属性数量N 属性维度D
+属性1
+属性2
+...
+属性N
+% base的属性维度D固定为1，属性取值为自然数，若单个数据有多个属性，需要将每个可能的多属性映射到一个自然数
+% 如果属性为string，需要先映射成自然数
+```
+query.attr 为txt文件，格式如下：
+```bash
+属性数量N 属性维度D
+属性1.1 属性1.2 ... 属性1.D
+属性2.1 属性2.2 ... 属性2.D
+...
+属性N.1 属性N.2 ... 属性N.D
+% query的属性维度D可以非1，表示单个query有不同的属性选择，它们之间是or的关系
+```
+
+
+### 向量+属性 混合搜索 运行方法
+编译
+```bash
+mkdir build
+cd build
+cmake ..
+make 
+```
+运行
+```bash
+cd build
+./main stage dataset datasize attrsize attrdim
+```
+* stage：取值为build、search or both
+* dataset：数据集名
+* datasize：数据集向量数目，单位为1M
+* attrsize：属性的最大取值数量
+* attrdim：单个query的属性维度
